@@ -5,6 +5,12 @@ load_dotenv()
 import anthropic
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+from supabase import create_client
+supabase_client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_KEY")
+)
+
 import streamlit as st
 
 from PIL import Image, ImageEnhance
@@ -14,10 +20,8 @@ def comprimi_immagine(file, max_size_mb=4):
     img = Image.open(file)
     if img.mode != 'RGB':
         img = img.convert('RGB')
-    # Migliora contrasto e nitidezza
     img = ImageEnhance.Contrast(img).enhance(1.5)
     img = ImageEnhance.Sharpness(img).enhance(2.0)
-    # Comprimi fino a stare sotto il limite
     quality = 85
     while True:
         buffer = io.BytesIO()
@@ -30,12 +34,10 @@ def comprimi_immagine(file, max_size_mb=4):
 
 def mostra_risposta(testo):
     import re
-    # Normalizza \[ \] e \( \)
     testo = re.sub(r'\\\[', '\n$$', testo)
     testo = re.sub(r'\\\]', '$$\n', testo)
     testo = re.sub(r'\\\(', '$', testo)
     testo = re.sub(r'\\\)', '$', testo)
-    # Divide in blocchi
     blocchi = re.split(r'(\$\$[\s\S]*?\$\$)', testo)
     for blocco in blocchi:
         blocco = blocco.strip()
@@ -50,7 +52,6 @@ def mostra_risposta(testo):
         else:
             st.markdown(blocco)
 
-# Database argomenti
 ARGOMENTI = {
     "Matematica": {
         "1°": [
@@ -144,18 +145,46 @@ if "sessione_attiva" not in st.session_state:
     st.session_state.sessione_attiva = False
 if "istruzioni" not in st.session_state:
     st.session_state.istruzioni = ""
+if "classe_saved" not in st.session_state:
+    st.session_state.classe_saved = "1°"
+if "materia_saved" not in st.session_state:
+    st.session_state.materia_saved = "Matematica"
 
 st.title("📚 Tutor AI — Liceo Scientifico")
 st.subheader("Il tuo assistente personale per matematica e fisica")
 
-# Mostra configurazione solo se sessione non attiva
+with st.expander("ℹ️ Come funziona", expanded=False):
+    st.markdown("""
+    **Benvenuto nel Tutor AI!** Ecco come usarlo:
+    
+    1. **Scegli la tua classe e materia**
+    2. **Controlla gli argomenti trattati** — sono tutti selezionati, deseleziona quelli che non hai ancora studiato
+    3. **Scegli la modalità:**
+       - 🎓 **Tutor** — ti guida con domande per arrivare alla soluzione da solo
+       - 📖 **Soluzione** — ti mostra la soluzione completa passo per passo
+    4. **Inserisci l'esercizio** — scrivi il testo oppure carica una foto
+    5. **Clicca Inizia** e chatta con il tutor!
+    
+    💡 *Il tutor usa solo gli argomenti che hai già studiato — niente formule che non conosci ancora!*
+    """)
+
 if not st.session_state.sessione_attiva:
 
     col1, col2 = st.columns(2)
     with col1:
-        classe = st.selectbox("Classe", ["1°", "2°", "3°", "4°", "5°"])
+        st.session_state.classe_saved = st.selectbox(
+            "Classe",
+            ["1°", "2°", "3°", "4°", "5°"],
+            index=["1°", "2°", "3°", "4°", "5°"].index(st.session_state.classe_saved)
+        )
+        classe = st.session_state.classe_saved
     with col2:
-        materia = st.selectbox("Materia", ["Matematica", "Fisica"])
+        st.session_state.materia_saved = st.selectbox(
+            "Materia",
+            ["Matematica", "Fisica"],
+            index=["Matematica", "Fisica"].index(st.session_state.materia_saved)
+        )
+        materia = st.session_state.materia_saved
 
     st.divider()
 
@@ -170,7 +199,11 @@ if not st.session_state.sessione_attiva:
     for c in classi_disponibili:
         with st.expander(f"📖 Anno {c}", expanded=(c == classe)):
             for argomento in ARGOMENTI[materia][c]:
-                if st.checkbox(argomento, value=True, key=f"{c}_{argomento}"):
+                key = f"chk_{c}_{argomento}"
+                saved_key = f"saved_{key}"
+                if key not in st.session_state:
+                    st.session_state[key] = st.session_state.get(saved_key, True)
+                if st.checkbox(argomento, key=key):
                     argomenti_selezionati.append(argomento)
 
     st.divider()
@@ -180,54 +213,35 @@ if not st.session_state.sessione_attiva:
     st.subheader("🎯 Come vuoi essere aiutato?")
     modalita = st.radio(
         "Scegli la modalità",
-        options=["🎓 Tutor", "📖 Soluzione", "✏️ Correzione"],
+        options=["🎓 Tutor", "📖 Soluzione"],
         captions=[
             "Ti guido con domande fino alla soluzione",
             "Soluzione completa spiegata passo per passo",
-            "Carica il tuo svolgimento e trovo l'errore"
         ]
     )
 
     st.divider()
     st.subheader("📝 Inserisci l'esercizio")
 
-    if modalita == "✏️ Correzione":
-        testo_esercizio = st.text_area(
-            "Scrivi o incolla l'esercizio",
-            placeholder="Es. Risolvi l'equazione x² + 5x + 6 = 0",
-            height=120
-        )
-        tab1, tab2 = st.tabs(["📁 Carica file", "📷 Scatta foto"])
-        with tab1:
-            foto_svolgimento = st.file_uploader("Carica una foto del tuo svolgimento", type=["jpg", "jpeg", "png"], key="upload_correzione")
-        with tab2:
-            camera_svolgimento = st.camera_input("Scatta una foto del tuo svolgimento", key="camera_correzione")
-    else:
-        testo_esercizio = st.text_area(
-            "Scrivi o incolla l'esercizio",
-            placeholder="Es. Risolvi l'equazione x² + 5x + 6 = 0",
-            height=120
-        )
-        tab1, tab2 = st.tabs(["📁 Carica file", "📷 Scatta foto"])
-        with tab1:
-            foto_esercizio = st.file_uploader("Carica una foto dell'esercizio", type=["jpg", "jpeg", "png"], key="upload_esercizio")
-        with tab2:
-            camera_esercizio = st.camera_input("Scatta una foto dell'esercizio", key="camera_esercizio")
+    testo_esercizio = st.text_area(
+        "Scrivi o incolla l'esercizio",
+        placeholder="Es. Risolvi l'equazione x² + 5x + 6 = 0",
+        height=120
+    )
+    tab1, tab2 = st.tabs(["📁 Carica file", "📷 Scatta foto"])
+    with tab1:
+        foto_esercizio = st.file_uploader("Carica una foto dell'esercizio", type=["jpg", "jpeg", "png"], key="upload_esercizio")
+        st.caption("📸 Consiglio: fotografa con buona luce, foglio piatto e inquadra bene il testo")
+    with tab2:
+        camera_esercizio = st.camera_input("Scatta una foto dell'esercizio", key="camera_esercizio")
 
     if st.button("🚀 Inizia", type="primary", use_container_width=True):
-        
-        # Recupera immagine se caricata
+
         immagine = None
-        if modalita == "✏️ Correzione":
-            if 'foto_svolgimento' in locals() and foto_svolgimento:
-                immagine = foto_svolgimento
-            elif 'camera_svolgimento' in locals() and camera_svolgimento:
-                immagine = camera_svolgimento
-        else:
-            if 'foto_esercizio' in locals() and foto_esercizio:
-                immagine = foto_esercizio
-            elif 'camera_esercizio' in locals() and camera_esercizio:
-                immagine = camera_esercizio
+        if foto_esercizio:
+            immagine = foto_esercizio
+        elif camera_esercizio:
+            immagine = camera_esercizio
 
         if not testo_esercizio and not immagine:
             st.warning("⚠️ Scrivi un esercizio o carica una foto prima di continuare!")
@@ -241,11 +255,9 @@ if not st.session_state.sessione_attiva:
                 "- Per funzioni a tratti usa sempre $$ all'inizio e $$ alla fine\n"
                 "- Non scrivere mai formule senza delimitatori\n"
                 "- Quando ricevi un'immagine, valuta la complessità della notazione:\n"
-                "- Se la notazione è semplice e chiara (testo, equazioni base, frazioni semplici) procedi direttamente\n"
-                "- Se la notazione è complessa o ambigua (funzioni a tratti, esponenti complessi, integrali, notazioni tipografiche elaborate) "
-                "- Trascrivi prima quello che hai letto e chiedi conferma allo studente prima di procedere\n"
-                "- Le funzioni definite a tratti sono SEMPRE ambigue nelle immagini — "
-                "- Chiedine SEMPRE la trascrizione allo studente prima di procedere\n"
+                "  se semplice e chiara procedi direttamente\n"
+                "  se complessa o ambigua trascrivi prima e chiedi conferma\n"
+                "- Le funzioni definite a tratti sono SEMPRE ambigue — chiedi SEMPRE conferma\n"
             )
 
             if modalita == "🎓 Tutor":
@@ -260,8 +272,7 @@ REGOLE FONDAMENTALI:
 - Parla in italiano, con linguaggio adatto a uno studente di liceo
 - Sii incoraggiante e paziente
 {regole_latex}"""
-
-            elif modalita == "📖 Soluzione":
+            else:
                 istruzioni = f"""Sei un tutor di matematica e fisica per il liceo scientifico italiano.
 Lo studente è al {classe} anno e sta studiando {materia}.
 Gli argomenti che ha già trattato sono: {argomenti_testo}.
@@ -273,22 +284,8 @@ REGOLE FONDAMENTALI:
 - Parla in italiano, con linguaggio adatto a uno studente di liceo
 {regole_latex}"""
 
-            else:
-                istruzioni = f"""Sei un tutor di matematica e fisica per il liceo scientifico italiano.
-Lo studente è al {classe} anno e sta studiando {materia}.
-Gli argomenti che ha già trattato sono: {argomenti_testo}.
-REGOLE FONDAMENTALI:
-- Analizza lo svolgimento dello studente
-- Identifica esattamente dove e perché ha sbagliato
-- Spiega l'errore in modo chiaro e costruttivo
-- Mostra come correggere l'errore
-- Usa SOLO concetti e strumenti che lo studente conosce
-- Parla in italiano, con linguaggio adatto a uno studente di liceo
-{regole_latex}"""
-                
             st.session_state.istruzioni = istruzioni
 
-            # Costruisce messaggio con testo e/o immagine
             if immagine:
                 import base64
                 immagine_compressa = comprimi_immagine(immagine)
@@ -307,13 +304,28 @@ REGOLE FONDAMENTALI:
             else:
                 contenuto = testo_esercizio
 
+            # Salva stato checkbox prima del rerun
+            for c in classi_disponibili:
+                for argomento in ARGOMENTI[materia][c]:
+                    key = f"chk_{c}_{argomento}"
+                    if key in st.session_state:
+                        st.session_state[f"saved_{key}"] = st.session_state[key]
+
+            # Salva sessione su Supabase
+            try:
+                supabase_client.table("sessioni").insert({
+                    "classe": classe,
+                    "materia": materia,
+                    "modalita": modalita,
+                    "tipo_input": "foto" if immagine else "testo"
+                }).execute()
+            except:
+                pass
+
             st.session_state.conversazione = [{"role": "user", "content": contenuto}]
             st.session_state.sessione_attiva = True
             st.rerun()
-
-# Sessione attiva — mostra chat
 else:
-    # Prima risposta di Claude se conversazione ha solo il messaggio utente
     if len(st.session_state.conversazione) == 1:
         with st.spinner("Il tutor sta analizzando l'esercizio..."):
             risposta = client.messages.create(
@@ -327,7 +339,6 @@ else:
                 "content": risposta.content[0].text
             })
 
-    # Mostra cronologia chat
     for msg in st.session_state.conversazione:
         if msg["role"] == "user":
             with st.chat_message("user"):
@@ -339,7 +350,6 @@ else:
             with st.chat_message("assistant", avatar="📚"):
                 mostra_risposta(msg["content"])
 
-    # Input risposta studente
     risposta_studente = st.chat_input("Scrivi la tua risposta...")
     if risposta_studente:
         st.session_state.conversazione.append({"role": "user", "content": risposta_studente})
@@ -356,7 +366,6 @@ else:
             })
         st.rerun()
 
-    # Pulsante nuova sessione
     if st.button("🔄 Nuovo esercizio", type="secondary"):
         st.session_state.conversazione = []
         st.session_state.sessione_attiva = False
