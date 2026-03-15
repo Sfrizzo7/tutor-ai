@@ -121,7 +121,7 @@ if "accesso" not in st.session_state:
     st.session_state.accesso = False
 
 if not st.session_state.accesso:
-    st.title("📚 Tutor AI — Liceo Scientifico")
+    st.title("📚 Tutor AI")
     st.subheader("Versione Beta")
     password = st.text_input("Inserisci il codice di accesso", type="password")
     if st.button("Accedi", type="primary"):
