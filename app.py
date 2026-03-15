@@ -133,7 +133,7 @@ if not st.session_state.accesso:
     st.stop()
 
 st.set_page_config(
-    page_title="Tutor AI — Liceo Scientifico",
+    page_title="Tutor AI",
     page_icon="📚",
     layout="centered"
 )
