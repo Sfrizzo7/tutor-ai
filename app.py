@@ -12,7 +12,6 @@ supabase_client = create_client(
 )
 
 import streamlit as st
-
 from PIL import Image, ImageEnhance
 import io
 
@@ -31,6 +30,33 @@ def comprimi_immagine(file, max_size_mb=4):
             buffer.seek(0)
             return buffer
         quality -= 10
+
+def mathpix_ocr(file):
+    import requests
+    import base64
+    img_data = base64.standard_b64encode(file.getvalue()).decode("utf-8")
+    media_type = "image/jpeg"
+    if hasattr(file, 'type'):
+        media_type = file.type
+    response = requests.post(
+        "https://api.mathpix.com/v3/text",
+        headers={
+            "app_id": os.getenv("MATHPIX_APP_ID"),
+            "app_key": os.getenv("MATHPIX_APP_KEY"),
+            "Content-Type": "application/json"
+        },
+        json={
+            "src": f"data:{media_type};base64,{img_data}",
+            "formats": ["text", "latex_styled"],
+            "math_inline_delimiters": ["$", "$"],
+            "math_display_delimiters": ["$$", "$$"]
+        }
+    )
+    if response.status_code == 200:
+        result = response.json()
+        return result.get("text", "")
+    else:
+        return None
 
 def mostra_risposta(testo):
     import re
@@ -149,8 +175,18 @@ if "classe_saved" not in st.session_state:
     st.session_state.classe_saved = "1°"
 if "materia_saved" not in st.session_state:
     st.session_state.materia_saved = "Matematica"
+if "testo_mathpix" not in st.session_state:
+    st.session_state.testo_mathpix = ""
+if "testo_esercizi" not in st.session_state:
+    st.session_state.testo_esercizi = ""
+if "esercizi_pronti" not in st.session_state:
+    st.session_state.esercizi_pronti = False
+if "immagine_caricata" not in st.session_state:
+    st.session_state.immagine_caricata = False
+if "immagine_bytes" not in st.session_state:
+    st.session_state.immagine_bytes = None    
 
-st.title("📚 Tutor AI — Liceo Scientifico")
+st.title("📚 Tutor AI")
 st.subheader("Il tuo assistente personale per matematica e fisica")
 
 with st.expander("ℹ️ Come funziona", expanded=False):
@@ -231,21 +267,97 @@ if not st.session_state.sessione_attiva:
     tab1, tab2 = st.tabs(["📁 Carica file", "📷 Scatta foto"])
     with tab1:
         foto_esercizio = st.file_uploader("Carica una foto dell'esercizio", type=["jpg", "jpeg", "png"], key="upload_esercizio")
-        st.caption("📸 Consiglio: fotografa con buona luce, foglio piatto e inquadra bene il testo")
+        st.caption("📸 Consiglio: fotografa solo l'esercizio che vuoi risolvere.")
     with tab2:
         camera_esercizio = st.camera_input("Scatta una foto dell'esercizio", key="camera_esercizio")
+        st.caption("📸 Inquadra solo l'esercizio che vuoi risolvere.")
+
+    immagine = None
+    if foto_esercizio:
+        immagine = foto_esercizio
+    elif camera_esercizio:
+        immagine = camera_esercizio
+
+    # Mostra selezione esercizio se esercizi già pronti
+    if st.session_state.esercizi_pronti:
+        st.divider()
+        st.subheader("📋 Esercizi rilevati")
+        mostra_risposta(st.session_state.testo_esercizi)
+        numero_esercizio = st.text_input(
+            "Quale esercizio vuoi risolvere? Scrivi il numero o 'tutti':",
+            key="scelta_esercizio"
+        )
+    else:
+        numero_esercizio = None
 
     if st.button("🚀 Inizia", type="primary", use_container_width=True):
 
-        immagine = None
-        if foto_esercizio:
-            immagine = foto_esercizio
-        elif camera_esercizio:
-            immagine = camera_esercizio
-
-        if not testo_esercizio and not immagine:
+        if not testo_esercizio and not immagine and not st.session_state.esercizi_pronti:
             st.warning("⚠️ Scrivi un esercizio o carica una foto prima di continuare!")
+        elif immagine and not st.session_state.esercizi_pronti:
+            # Prima lettura immagine con Mathpix
+            with st.spinner("📖 Lettura dell'esercizio in corso..."):
+                testo_mathpix = mathpix_ocr(immagine)
+                if not testo_mathpix:
+                    st.warning("⚠️ Non riesco a leggere l'immagine, prova a migliorare la qualità della foto.")
+                    st.stop()
+                st.session_state.testo_mathpix = testo_mathpix
+                try:
+                    st.session_state.immagine_bytes = io.BytesIO(immagine.getvalue())
+                except:
+                    st.session_state.immagine_bytes = io.BytesIO(immagine.read())
+
+            with st.spinner("📋 Identificazione esercizi in corso..."):
+                risposta_esercizi = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1000,
+                    messages=[{
+                        "role": "user",
+                        "content": f"Identifica i singoli esercizi nel testo seguente e restituisci SOLO una lista numerata. Se c'è un solo esercizio scrivi solo '1. [testo esercizio]'. Testo: {testo_mathpix}"
+                    }]
+                )
+                st.session_state.testo_esercizi = risposta_esercizi.content[0].text
+                st.session_state.esercizi_pronti = True
+                st.rerun()
+
         else:
+            # Procedi con la soluzione
+            if st.session_state.esercizi_pronti:
+                if not numero_esercizio:
+                    st.warning("⚠️ Scrivi il numero dell'esercizio che vuoi risolvere!")
+                    st.stop()
+                if numero_esercizio.lower() == "tutti":
+                    testo_finale = st.session_state.testo_mathpix
+                else:
+                    with st.spinner("⏳ Preparazione esercizio..."):
+                        risposta_scelta = client.messages.create(
+                            model="claude-sonnet-4-20250514",
+                            max_tokens=500,
+                            messages=[{
+                                "role": "user",
+                                "content": f"Dal testo seguente estrai SOLO il testo dell'esercizio numero {numero_esercizio}, senza aggiungere nulla: {st.session_state.testo_esercizi}"
+                            }]
+                        )
+                        testo_finale = risposta_scelta.content[0].text
+
+                # Passa sia il testo che l'immagine originale
+                import base64
+                immagine_compressa = comprimi_immagine(st.session_state.immagine_bytes)
+                image_data = base64.standard_b64encode(immagine_compressa.getvalue()).decode("utf-8")
+                contenuto = [
+                    {"type": "text", "text": testo_finale},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_data
+                        }
+                    }
+                ]
+            else:
+                contenuto = testo_esercizio
+
             argomenti_testo = ", ".join(argomenti_selezionati)
 
             regole_latex = (
@@ -284,34 +396,14 @@ REGOLE FONDAMENTALI:
 - Parla in italiano, con linguaggio adatto a uno studente di liceo
 {regole_latex}"""
 
-            st.session_state.istruzioni = istruzioni
-
-            if immagine:
-                import base64
-                immagine_compressa = comprimi_immagine(immagine)
-                image_data = base64.standard_b64encode(immagine_compressa.getvalue()).decode("utf-8")
-                contenuto = []
-                if testo_esercizio:
-                    contenuto.append({"type": "text", "text": testo_esercizio})
-                contenuto.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": image_data
-                    }
-                })
-            else:
-                contenuto = testo_esercizio
-
-            # Salva stato checkbox prima del rerun
+            # Salva stato checkbox
             for c in classi_disponibili:
                 for argomento in ARGOMENTI[materia][c]:
                     key = f"chk_{c}_{argomento}"
                     if key in st.session_state:
                         st.session_state[f"saved_{key}"] = st.session_state[key]
 
-            # Salva sessione su Supabase
+            # Salva su Supabase
             try:
                 supabase_client.table("sessioni").insert({
                     "classe": classe,
@@ -322,9 +414,17 @@ REGOLE FONDAMENTALI:
             except:
                 pass
 
+            # Reset esercizi pronti
+            st.session_state.esercizi_pronti = False
+            st.session_state.immagine_caricata = False
+            st.session_state.testo_mathpix = ""
+            st.session_state.testo_esercizi = ""
+
+            st.session_state.istruzioni = istruzioni
             st.session_state.conversazione = [{"role": "user", "content": contenuto}]
             st.session_state.sessione_attiva = True
             st.rerun()
+
 else:
     if len(st.session_state.conversazione) == 1:
         with st.spinner("Il tutor sta analizzando l'esercizio..."):
@@ -370,4 +470,8 @@ else:
         st.session_state.conversazione = []
         st.session_state.sessione_attiva = False
         st.session_state.istruzioni = ""
+        st.session_state.esercizi_pronti = False
+        st.session_state.immagine_caricata = False
+        st.session_state.testo_mathpix = ""
+        st.session_state.testo_esercizi = ""
         st.rerun()
