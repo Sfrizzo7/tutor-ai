@@ -164,6 +164,16 @@ st.set_page_config(
     layout="centered"
 )
 
+# PWA manifest
+st.markdown("""
+    <link rel="manifest" href="manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Tutor AI">
+    <meta name="theme-color" content="#FF4B4B">
+""", unsafe_allow_html=True)
+
 # Inizializza session state
 if "conversazione" not in st.session_state:
     st.session_state.conversazione = []
