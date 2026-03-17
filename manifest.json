@@ -1,0 +1,21 @@
+{
+    "name": "Tutor AI",
+    "short_name": "TutorAI",
+    "description": "Il tuo assistente personale per matematica e fisica",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#FF4B4B",
+    "icons": [
+        {
+            "src": "icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
